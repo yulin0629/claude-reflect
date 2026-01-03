@@ -16,26 +16,31 @@ allowed-tools: Read, Edit, Write, Glob, Bash, Grep, AskUserQuestion
 
 ## Your Task
 
-### First-Run Detection
+### First-Run Detection (Per-Project)
 
-Check if this is the first time /reflect is being run:
+Check if /reflect has been run in THIS project before:
 
 ```bash
-test -f ~/.claude/reflect-initialized && echo "initialized" || echo "first-run"
+PROJECT_FOLDER=$(ls ~/.claude/projects/ 2>/dev/null | grep -F "$(pwd | tr '/' '-' | cut -c2-)" | head -1)
+if [ -n "$PROJECT_FOLDER" ]; then
+  test -f ~/.claude/projects/$PROJECT_FOLDER/.reflect-initialized && echo "initialized" || echo "first-run"
+else
+  echo "first-run"
+fi
 ```
 
-**If "first-run" AND user did NOT pass `--scan-history`:**
+**If "first-run" for this project AND user did NOT pass `--scan-history`:**
 
 Use AskUserQuestion to recommend historical scan:
 ```json
 {
   "questions": [{
-    "question": "This appears to be your first time running /reflect. Would you like to scan your past sessions for learnings?",
+    "question": "First time running /reflect in this project. Scan past sessions for learnings?",
     "header": "First run",
     "multiSelect": false,
     "options": [
-      {"label": "Yes, scan history (Recommended)", "description": "Scan past sessions for corrections you made before installing claude-reflect"},
-      {"label": "No, just process queue", "description": "Only process learnings captured since installation"}
+      {"label": "Yes, scan history (Recommended)", "description": "Find corrections from past sessions in this project"},
+      {"label": "No, just process queue", "description": "Only process learnings captured by hooks"}
     ]
   }]
 }
@@ -81,34 +86,36 @@ Note: Project paths have `/` replaced with `-`. For `/Users/bob/code/myapp`, loo
 - Agent files (`agent-*.jsonl`) - these may contain corrections too
 - Apply `--days N` filter by checking file modification times if specified
 
-**0.5a-note. Handling Large Session Files:**
+**0.5b. Extract corrections from session files:**
 
-Session files can be very large (>25000 tokens). DO NOT use the Read tool on them directly.
+Session files are JSONL (one JSON object per line). Use this single command to extract user corrections:
 
-Instead:
-1. **Use Grep tool** to search for correction patterns:
-   ```
-   Grep(pattern: "no,? use|don't use|actually|remember:", path: "[SESSION_FILE]", output_mode: "content")
-   ```
-
-2. **Use extraction scripts** which handle large files efficiently (streaming jq parser):
-   ```bash
-   ~/.claude/scripts/extract-session-learnings.sh "[SESSION_FILE]" --corrections-only
-   ~/.claude/scripts/extract-tool-rejections.sh "[SESSION_FILE]"
-   ```
-
-3. If you must read file content, use **offset/limit**:
-   ```
-   Read(file_path: "[SESSION_FILE]", offset: 0, limit: 500)
-   ```
-
-**0.5b. For each session file, extract corrections:**
 ```bash
-# User corrections from tool rejections (HIGH confidence)
-~/.claude/scripts/extract-tool-rejections.sh "$SESSION_FILE"
+# Extract user messages with correction patterns from a session file
+python3 << 'PYEOF'
+import json, sys, re
+patterns = r'(?i)(no,?\s*(use|don.t)|actually|remember:|instead.?\s+use|should be|not\s+\w+.?\s+use|don.t use)'
+for line in open(sys.argv[1]):
+    try:
+        obj = json.loads(line)
+        if obj.get('type') == 'user':
+            msg = obj.get('message', {})
+            if isinstance(msg, dict):
+                for c in msg.get('content', []):
+                    if isinstance(c, dict) and c.get('type') == 'text':
+                        text = c.get('text', '')
+                        if re.search(patterns, text) and len(text) > 10 and len(text) < 500:
+                            print('---')
+                            print(text[:300])
+    except: pass
+PYEOF
+```
 
-# User corrections from messages (pattern matching)
-~/.claude/scripts/extract-session-learnings.sh "$SESSION_FILE" --corrections-only
+Run this for each session file found in 0.5a, passing the file path as argument.
+
+**Alternative (if python unavailable):** Use jq + grep:
+```bash
+cat "$SESSION_FILE" | jq -r 'select(.type=="user") | .message.content[]? | select(.type=="text") | .text' 2>/dev/null | grep -iE "(no,? use|don't use|actually|remember:|instead)"
 ```
 
 **0.5c. Apply date filter if `--days N` specified:**
@@ -177,15 +184,17 @@ ls -lt ~/.claude/projects/[PROJECT_FOLDER]/*.jsonl | head -5
 Agent files (`agent-*.jsonl`) are sub-conversations; focus on main session files for current session analysis.
 
 **2b. Extract tool rejections (HIGH confidence corrections):**
+
+Tool rejections are when user interrupted/stopped a tool. These are HIGH confidence learnings.
+
 ```bash
-~/.claude/scripts/extract-tool-rejections.sh "$SESSION_FILE"
+# Find tool rejections in current session
+cat "$SESSION_FILE" | jq -r 'select(.type=="tool_result" and .error != null) | "\(.toolName): \(.error)"' 2>/dev/null | head -20
 ```
-Tool rejections are HIGH confidence because the user explicitly stopped an action and provided guidance.
 
 **2c. Extract user messages with correction patterns:**
-```bash
-~/.claude/scripts/extract-session-learnings.sh "$SESSION_FILE" --corrections-only
-```
+
+Use the same python/jq approach from Step 0.5b on the current session file.
 
 **2d. Also reflect on conversation context:**
 - Were there any corrections or patterns not explicitly queued?
@@ -435,12 +444,15 @@ DONE: Applied [N] learnings
 ════════════════════════════════════════════════════════════
 ```
 
-### Step 10: Mark Initialized
+### Step 10: Mark Initialized (Per-Project)
 
-Create marker file so first-run detection won't trigger again:
+Create marker file for THIS project so first-run detection won't trigger again:
 
 ```bash
-touch ~/.claude/reflect-initialized
+PROJECT_FOLDER=$(ls ~/.claude/projects/ 2>/dev/null | grep -F "$(pwd | tr '/' '-' | cut -c2-)" | head -1)
+if [ -n "$PROJECT_FOLDER" ]; then
+  touch ~/.claude/projects/$PROJECT_FOLDER/.reflect-initialized
+fi
 ```
 
 ## Formatting Rules

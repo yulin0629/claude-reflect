@@ -22,9 +22,11 @@ claude plugin marketplace add bayramannakov/claude-reflect
 
 # Install the plugin
 claude plugin install claude-reflect@claude-reflect-marketplace
+
+# IMPORTANT: Restart Claude Code to activate the plugin
 ```
 
-That's it! Hooks auto-configure, commands are ready to use.
+After installation, **restart Claude Code** (exit and reopen). Then hooks auto-configure and commands are ready.
 
 > **First run?** When you run `/reflect` for the first time, you'll be prompted to scan your past sessions for learnings.
 
@@ -32,6 +34,7 @@ That's it! Hooks auto-configure, commands are ready to use.
 
 - [Claude Code](https://claude.ai/code) CLI installed
 - `jq` for JSON processing (`brew install jq` on macOS)
+- `python3` (included on most systems)
 
 ## Commands
 
