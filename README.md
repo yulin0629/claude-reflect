@@ -17,10 +17,16 @@ When you correct Claude Code during a session ("no, use gpt-5.1 not gpt-5", "use
 ## Installation
 
 ```bash
-/plugin install bayramannakov/claude-reflect
+# Add the marketplace
+claude plugin marketplace add bayramannakov/claude-reflect
+
+# Install the plugin
+claude plugin install claude-reflect@claude-reflect-marketplace
 ```
 
 That's it! Hooks auto-configure, commands are ready to use.
+
+> **First run?** When you run `/reflect` for the first time, you'll be prompted to scan your past sessions for learnings.
 
 ### Prerequisites
 
@@ -96,7 +102,7 @@ Approved learnings are added to:
 ## Uninstall
 
 ```bash
-/plugin uninstall claude-reflect
+claude plugin uninstall claude-reflect@claude-reflect-marketplace
 ```
 
 ## File Structure
