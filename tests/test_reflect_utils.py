@@ -359,9 +359,20 @@ class TestToolRejectionExtraction(unittest.TestCase):
 
     def test_extract_tool_rejection_with_feedback(self):
         """Test extracting tool rejection with user feedback."""
+        # Schema matches actual Claude Code session files:
+        # type=user, message.content[].type=tool_result, is_error=true
         session_data = [
             {
-                "toolUseResult": "The user doesn't want to proceed\nuser said:\nDon't delete that file"
+                "type": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "is_error": True,
+                            "content": "The user doesn't want to proceed\nthe user said:\nDon't delete that file"
+                        }
+                    ]
+                }
             },
         ]
 
@@ -377,7 +388,16 @@ class TestToolRejectionExtraction(unittest.TestCase):
         """Test that empty feedback is skipped."""
         session_data = [
             {
-                "toolUseResult": "The user doesn't want to proceed\nuser said:\n"
+                "type": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "is_error": True,
+                            "content": "The user doesn't want to proceed\nthe user said:\n"
+                        }
+                    ]
+                }
             },
         ]
 
@@ -392,7 +412,16 @@ class TestToolRejectionExtraction(unittest.TestCase):
         """Test that normal tool results are ignored."""
         session_data = [
             {
-                "toolUseResult": "File created successfully"
+                "type": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "is_error": False,
+                            "content": "File created successfully"
+                        }
+                    ]
+                }
             },
         ]
 

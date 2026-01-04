@@ -281,6 +281,12 @@ def extract_tool_rejections(session_file: Path) -> List[str]:
     """
     Extract user corrections from tool rejections in session files.
 
+    Matches the behavior of the legacy bash script which looks for:
+    - type == "user" entries
+    - message.content[] array with type == "tool_result"
+    - is_error == true
+    - content containing "The user doesn't want to proceed"
+
     Args:
         session_file: Path to the session JSONL file
 
@@ -304,21 +310,49 @@ def extract_tool_rejections(session_file: Path) -> List[str]:
                 except json.JSONDecodeError:
                     continue
 
-                # Look for tool rejection pattern
-                tool_result = entry.get("toolUseResult", "")
-                if not tool_result:
+                # Must be a user entry (matches bash: select(.type=="user"))
+                if entry.get("type") != "user":
                     continue
 
-                if "The user doesn't want to proceed" not in tool_result:
+                # Get message.content array (matches bash: select(.message.content | type == "array"))
+                content = entry.get("message", {}).get("content", [])
+                if not isinstance(content, list):
                     continue
 
-                # Extract text after "user said:"
-                if "user said:" in tool_result:
-                    parts = tool_result.split("user said:")
-                    if len(parts) > 1:
-                        feedback = parts[1].strip()
-                        if feedback:  # Skip empty feedback
-                            rejections.append(feedback)
+                # Look for tool_result items in content array
+                for item in content:
+                    if not isinstance(item, dict):
+                        continue
+
+                    # Must be type == "tool_result" (matches bash: select(.type=="tool_result"))
+                    if item.get("type") != "tool_result":
+                        continue
+
+                    # Must have is_error == true (matches bash: select(.is_error==true))
+                    if not item.get("is_error"):
+                        continue
+
+                    # Get the content string
+                    tool_content = item.get("content", "")
+                    if not isinstance(tool_content, str):
+                        continue
+
+                    # Must contain rejection message (matches bash: select(.content | contains(...)))
+                    if "The user doesn't want to proceed" not in tool_content:
+                        continue
+
+                    # Extract text after "the user said:" (matches bash: awk '/the user said:/{getline; print}')
+                    # Note: bash uses lowercase "the user said:", let's be case-insensitive
+                    lower_content = tool_content.lower()
+                    if "the user said:" in lower_content:
+                        # Find the position case-insensitively
+                        idx = lower_content.find("the user said:")
+                        after_marker = tool_content[idx + len("the user said:"):]
+                        # Get the next line (bash uses getline)
+                        lines = after_marker.strip().split("\n")
+                        if lines and lines[0].strip():
+                            rejections.append(lines[0].strip())
+
     except IOError:
         return []
 
