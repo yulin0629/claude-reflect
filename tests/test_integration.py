@@ -12,6 +12,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+# Skip bash tests on Windows
+IS_WINDOWS = sys.platform == 'win32'
+skip_on_windows = unittest.skipIf(IS_WINDOWS, "Bash scripts not available on Windows")
 
 # Script locations
 SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
@@ -71,6 +74,7 @@ class TestPostCommitReminder(unittest.TestCase):
         import shutil
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
+    @skip_on_windows
     def test_bash_git_commit_detected(self):
         """Test bash script detects git commit."""
         stdin = json.dumps({"tool_input": {"command": "git commit -m 'test'"}})
@@ -89,6 +93,7 @@ class TestPostCommitReminder(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("Git commit detected", stdout)
 
+    @skip_on_windows
     def test_bash_ignores_amend(self):
         """Test bash script ignores --amend commits."""
         stdin = json.dumps({"tool_input": {"command": "git commit --amend -m 'test'"}})
@@ -107,6 +112,7 @@ class TestPostCommitReminder(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertNotIn("Git commit detected", stdout)
 
+    @skip_on_windows
     def test_bash_ignores_non_commit(self):
         """Test bash script ignores non-commit commands."""
         stdin = json.dumps({"tool_input": {"command": "ls -la"}})
@@ -125,6 +131,7 @@ class TestPostCommitReminder(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(stdout.strip(), "")
 
+    @skip_on_windows
     def test_bash_empty_input(self):
         """Test bash script handles empty input."""
         stdout, stderr, code = run_bash_script(
@@ -139,6 +146,7 @@ class TestPostCommitReminder(unittest.TestCase):
         )
         self.assertEqual(code, 0)
 
+    @skip_on_windows
     def test_bash_invalid_json(self):
         """Test bash script handles invalid JSON."""
         stdout, stderr, code = run_bash_script(
@@ -173,6 +181,7 @@ class TestExtractSessionLearnings(unittest.TestCase):
             for entry in entries:
                 f.write(json.dumps(entry) + "\n")
 
+    @skip_on_windows
     def test_bash_extracts_user_messages(self):
         """Test bash script extracts user messages."""
         self._create_session_file([
@@ -217,6 +226,7 @@ class TestExtractSessionLearnings(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("Hello world", stdout)
 
+    @skip_on_windows
     def test_bash_skips_meta_messages(self):
         """Test bash script skips isMeta messages."""
         self._create_session_file([
@@ -269,6 +279,7 @@ class TestExtractSessionLearnings(unittest.TestCase):
         self.assertNotIn("Meta message", stdout)
         self.assertIn("Regular message", stdout)
 
+    @skip_on_windows
     def test_bash_corrections_only_flag(self):
         """Test bash script --corrections-only flag."""
         self._create_session_file([
@@ -319,6 +330,7 @@ class TestExtractSessionLearnings(unittest.TestCase):
         self.assertNotIn("Hello world", stdout)
         self.assertIn("no, use Python", stdout)
 
+    @skip_on_windows
     def test_bash_nonexistent_file(self):
         """Test bash script handles nonexistent file."""
         stdout, stderr, code = run_bash_script(
@@ -374,6 +386,7 @@ class TestCapturePatternEquivalence(unittest.TestCase):
                 pass
 
 
+@skip_on_windows
 class TestBashPythonOutputEquivalence(unittest.TestCase):
     """Tests to verify bash and Python produce equivalent output."""
 
