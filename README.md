@@ -152,6 +152,38 @@ User: "no, always run tests before deploying"
 
 This makes skills smarter over time, not just CLAUDE.md.
 
+## Upgrading
+
+### From v2.0.x or earlier
+
+If you see errors like "Duplicate hooks file detected" or "No such file or directory" after updating, you need to clear the plugin cache. This is due to known Claude Code caching issues:
+- [#14061](https://github.com/anthropics/claude-code/issues/14061) - `/plugin update` doesn't invalidate cache
+- [#15369](https://github.com/anthropics/claude-code/issues/15369) - Uninstall doesn't clear cached files
+
+```bash
+# 1. Uninstall the plugin
+claude plugin uninstall claude-reflect@claude-reflect-marketplace
+
+# 2. Clear both caches (required!)
+rm -rf ~/.claude/plugins/marketplaces/claude-reflect-marketplace
+rm -rf ~/.claude/plugins/cache/claude-reflect-marketplace
+
+# 3. Exit Claude Code completely (restart terminal or close app)
+
+# 4. Reinstall
+claude plugin install claude-reflect@claude-reflect-marketplace
+```
+
+### Standard Update
+
+For normal updates (when no cache issues):
+
+```bash
+# Use the /plugin menu in Claude Code
+/plugin
+# Select "Update now" for claude-reflect
+```
+
 ## Uninstall
 
 ```bash
