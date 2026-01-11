@@ -181,18 +181,42 @@ POSITIVE_PATTERNS = [
 
 # Correction patterns (conservative set to minimize false positives)
 # Format: (regex_pattern, pattern_name, is_strong)
+#
+# DESIGN NOTES:
+# - These patterns are English-centric as a FAST first-pass filter
+# - Non-English corrections are caught by semantic filtering during /reflect
+# - We use STRUCTURAL signals (length, questions, task requests) for language-agnostic filtering
+# - Users can use explicit markers like "remember:" in any language
+#
 CORRECTION_PATTERNS = [
-    (r"no[,. ]+use", "no,use", True),
-    (r"don't use|do not use", "don't-use", True),
-    (r"stop using|never use", "stop/never-use", True),
+    (r"^no[,. ]+", "no,", True),  # Starts with "no," - common correction opener
+    (r"^don't\b|^do not\b", "don't", True),  # Starts with don't/do not
+    (r"^stop\b|^never\b", "stop/never", True),  # Starts with stop/never
     (r"that's (wrong|incorrect)|that is (wrong|incorrect)", "that's-wrong", True),
-    (r"not right|not correct", "not-right", False),
-    (r"^actually[,. ]|[.!?] actually[,. ]", "actually", False),
-    (r"I meant|I said", "I-meant/said", True),
-    (r"I told you|I already told", "I-told-you", True),  # Higher confidence
-    (r"you (should|need to|must) use", "you-should-use", False),
-    (r"use .+ not|not .+, use", "use-X-not-Y", True),
+    (r"^actually[,. ]", "actually", False),  # Starts with "actually"
+    (r"^I meant\b|^I said\b", "I-meant/said", True),  # Clarification
+    (r"^I told you\b|^I already told\b", "I-told-you", True),  # Higher confidence
+    (r"use .{1,30} not\b", "use-X-not-Y", True),  # "use X not Y" - limited gap
 ]
+
+# Structural patterns indicating FALSE POSITIVES (language-agnostic)
+# These focus on MESSAGE STRUCTURE rather than specific words
+FALSE_POSITIVE_PATTERNS = [
+    r"\?$",  # Ends with question mark → question, not correction
+    r"^(please|can you|could you|would you|help me)\b",  # Task request openers
+    r"(help|fix|check|review|figure out|set up)\s+(this|that|it|the)\b",  # Task verbs
+    r"(error|failed|could not|cannot|can't|unable to)\s+\w+",  # Error descriptions
+    r"(is|was|are|were)\s+(not|broken|failing)",  # Bug reports
+    r"^I (need|want|would like)\b",  # Task requests
+    r"^(ok|okay|alright)[,.]?\s+(so|now|let)",  # Task continuations
+]
+
+# Maximum message length for weak patterns (structural heuristic)
+# Long messages are more likely to be context/tasks than corrections
+MAX_WEAK_PATTERN_LENGTH = 150
+
+# Very short messages without question marks are more likely corrections
+MIN_SHORT_CORRECTION_LENGTH = 80
 
 
 def detect_patterns(text: str) -> Tuple[Optional[str], str, float, str, int]:
@@ -207,10 +231,15 @@ def detect_patterns(text: str) -> Tuple[Optional[str], str, float, str, int]:
         sentiment: "correction" or "positive"
         decay_days: Number of days until decay
     """
-    # Check for explicit "remember:"
+    # Check for explicit "remember:" - always highest priority
     for pattern, name, confidence, decay in EXPLICIT_PATTERNS:
         if re.search(pattern, text, re.IGNORECASE):
             return ("explicit", name, confidence, "correction", decay)
+
+    # Check for FALSE POSITIVE patterns - skip these messages
+    for fp_pattern in FALSE_POSITIVE_PATTERNS:
+        if re.search(fp_pattern, text, re.IGNORECASE):
+            return (None, "", 0.0, "correction", 90)
 
     # Check for positive patterns
     matched_positive = []
@@ -221,6 +250,9 @@ def detect_patterns(text: str) -> Tuple[Optional[str], str, float, str, int]:
     if matched_positive:
         return ("positive", " ".join(matched_positive), 0.70, "positive", 90)
 
+    # Skip long messages for weak patterns (likely task requests)
+    text_length = len(text)
+
     # Check for correction patterns
     matched_corrections = []
     pattern_count = 0
@@ -229,6 +261,9 @@ def detect_patterns(text: str) -> Tuple[Optional[str], str, float, str, int]:
 
     for pattern, name, is_strong in CORRECTION_PATTERNS:
         if re.search(pattern, text, re.IGNORECASE):
+            # Skip weak patterns in long messages
+            if not is_strong and text_length > MAX_WEAK_PATTERN_LENGTH:
+                continue
             matched_corrections.append(name)
             pattern_count += 1
             if is_strong:
@@ -237,7 +272,7 @@ def detect_patterns(text: str) -> Tuple[Optional[str], str, float, str, int]:
                 has_i_told_you = True
 
     if matched_corrections:
-        # Calculate confidence based on pattern count and type
+        # Calculate confidence based on pattern count, type, and length
         if has_i_told_you:
             confidence = 0.85
             decay_days = 120
@@ -247,9 +282,21 @@ def detect_patterns(text: str) -> Tuple[Optional[str], str, float, str, int]:
         elif pattern_count >= 2:
             confidence = 0.75
             decay_days = 90
-        else:
-            confidence = 0.60
+        elif has_strong_pattern:
+            confidence = 0.70
             decay_days = 60
+        else:
+            confidence = 0.55  # Reduced for weak single patterns
+            decay_days = 45
+
+        # Adjust confidence based on message length (structural signal)
+        # Short messages are more likely to be direct corrections
+        if text_length < MIN_SHORT_CORRECTION_LENGTH:
+            confidence = min(0.90, confidence + 0.10)  # Boost for short messages
+        elif text_length > 300:
+            confidence = max(0.50, confidence - 0.15)  # Reduce for long messages
+        elif text_length > 150:
+            confidence = max(0.55, confidence - 0.10)
 
         return ("auto", " ".join(matched_corrections), confidence, "correction", decay_days)
 
@@ -316,9 +363,15 @@ def extract_user_messages(session_file: Path, corrections_only: bool = False) ->
                 if entry.get("isMeta"):
                     continue
 
-                # Extract text from content array
+                # Extract text from content (can be string or list)
                 content = entry.get("message", {}).get("content", [])
-                if isinstance(content, list):
+
+                # Handle string content directly
+                if isinstance(content, str):
+                    if content and _should_include_message(content):
+                        messages.append(content)
+                # Handle list of content items
+                elif isinstance(content, list):
                     for item in content:
                         if isinstance(item, dict) and item.get("type") == "text":
                             text = item.get("text", "")

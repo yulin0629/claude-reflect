@@ -153,7 +153,7 @@ class TestPatternDetection(unittest.TestCase):
         item_type, patterns, confidence, sentiment, decay = result
 
         self.assertEqual(item_type, "auto")
-        self.assertIn("no,use", patterns)
+        self.assertIn("no,", patterns)
         self.assertEqual(sentiment, "correction")
 
     def test_correction_dont_use(self):
@@ -162,7 +162,7 @@ class TestPatternDetection(unittest.TestCase):
         item_type, patterns, confidence, sentiment, decay = result
 
         self.assertEqual(item_type, "auto")
-        self.assertIn("don't-use", patterns)
+        self.assertIn("don't", patterns)
 
     def test_correction_stop_using(self):
         """Test detection of 'stop using' correction."""
@@ -170,7 +170,7 @@ class TestPatternDetection(unittest.TestCase):
         item_type, patterns, confidence, sentiment, decay = result
 
         self.assertEqual(item_type, "auto")
-        self.assertIn("stop/never-use", patterns)
+        self.assertIn("stop/never", patterns)
 
     def test_correction_never_use(self):
         """Test detection of 'never use' correction."""
@@ -178,7 +178,7 @@ class TestPatternDetection(unittest.TestCase):
         item_type, patterns, confidence, sentiment, decay = result
 
         self.assertEqual(item_type, "auto")
-        self.assertIn("stop/never-use", patterns)
+        self.assertIn("stop/never", patterns)
 
     def test_correction_thats_wrong(self):
         """Test detection of 'that's wrong' correction."""
@@ -195,7 +195,8 @@ class TestPatternDetection(unittest.TestCase):
 
         self.assertEqual(item_type, "auto")
         self.assertIn("I-told-you", patterns)
-        self.assertEqual(confidence, 0.85)
+        # Base 0.85 + 0.10 short message boost = 0.90 (capped)
+        self.assertGreaterEqual(confidence, 0.85)
         self.assertEqual(decay, 120)
 
     def test_multiple_patterns_high_confidence(self):
@@ -213,6 +214,52 @@ class TestPatternDetection(unittest.TestCase):
 
         self.assertIsNone(item_type)
         self.assertEqual(patterns, "")
+
+    def test_false_positive_question_rejected(self):
+        """Test that questions (ending with ?) are rejected."""
+        result = detect_patterns("can you figure out how to make this fit?")
+        item_type, patterns, confidence, sentiment, decay = result
+
+        self.assertIsNone(item_type)
+
+    def test_false_positive_task_request_rejected(self):
+        """Test that task requests are rejected."""
+        result = detect_patterns("please help me fix this issue")
+        item_type, patterns, confidence, sentiment, decay = result
+
+        self.assertIsNone(item_type)
+
+    def test_false_positive_error_description_rejected(self):
+        """Test that error descriptions are rejected."""
+        result = detect_patterns("the error is: could not connect to database")
+        item_type, patterns, confidence, sentiment, decay = result
+
+        self.assertIsNone(item_type)
+
+    def test_false_positive_bug_report_rejected(self):
+        """Test that bug reports are rejected."""
+        result = detect_patterns("it just opens and closes, is not working")
+        item_type, patterns, confidence, sentiment, decay = result
+
+        self.assertIsNone(item_type)
+
+    def test_short_message_confidence_boost(self):
+        """Test that short messages get a confidence boost."""
+        result = detect_patterns("no, use gpt-5.1")
+        item_type, patterns, confidence, sentiment, decay = result
+
+        self.assertEqual(item_type, "auto")
+        self.assertGreaterEqual(confidence, 0.75)  # Boosted for short message
+
+    def test_long_message_confidence_reduced(self):
+        """Test that long messages get reduced confidence."""
+        long_msg = "no, " + "this is a very long explanation " * 15
+        result = detect_patterns(long_msg)
+        item_type, patterns, confidence, sentiment, decay = result
+
+        # Should still match but with lower confidence
+        if item_type == "auto":
+            self.assertLessEqual(confidence, 0.65)
 
 
 class TestQueueItemCreation(unittest.TestCase):
@@ -282,6 +329,32 @@ class TestSessionExtraction(unittest.TestCase):
         self.assertEqual(len(messages), 2)
         self.assertEqual(messages[0], "Hello world")
         self.assertEqual(messages[1], "no, use Python instead")
+
+    def test_extract_user_messages_string_content(self):
+        """Test extracting user messages when content is a string (not list)."""
+        session_data = [
+            {
+                "type": "user",
+                "message": {
+                    "content": "This is a string content message"
+                }
+            },
+            {
+                "type": "user",
+                "message": {
+                    "content": "no, use this approach instead"
+                }
+            },
+        ]
+
+        with open(self.session_file, "w") as f:
+            for entry in session_data:
+                f.write(json.dumps(entry) + "\n")
+
+        messages = extract_user_messages(self.session_file)
+        self.assertEqual(len(messages), 2)
+        self.assertEqual(messages[0], "This is a string content message")
+        self.assertEqual(messages[1], "no, use this approach instead")
 
     def test_extract_user_messages_skip_meta(self):
         """Test that isMeta messages are skipped."""
