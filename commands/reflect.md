@@ -121,31 +121,60 @@ TodoWrite tasks for /reflect:
 
 **If user passed `--targets`:**
 
-Detect and display all AI assistant config files in the current project:
+Detect and display all AI assistant config files with **line counts** and **size warnings**.
 
-```bash
-echo "=== Detected AI Assistant Configs ==="
-echo ""
-echo "✓ ~/.claude/CLAUDE.md (Claude Code - always enabled)"
-test -f CLAUDE.md && echo "✓ ./CLAUDE.md (Project)" || echo "✗ ./CLAUDE.md (not found)"
-test -f AGENTS.md && echo "✓ AGENTS.md (Codex, Cursor, Aider, Jules, Zed)" || echo "✗ AGENTS.md (not found)"
+**Line Count Threshold:** 150 lines (research suggests frontier models handle ~150-200 instructions reliably)
+
+**Detection Steps:**
+
+1. Find all CLAUDE.md files (global, project root, subdirectories)
+2. Count lines in each file
+3. Display with status indicator:
+   - `✓` = under 150 lines (healthy)
+   - `⚠️` = over 150 lines (consider cleanup)
+
+```python
+# Cross-platform line counting (works on Windows, macOS, Linux)
+from pathlib import Path
+
+def count_lines(filepath):
+    try:
+        return len(Path(filepath).expanduser().read_text().splitlines())
+    except:
+        return 0
+
+# Example usage
+count_lines("~/.claude/CLAUDE.md")
+count_lines("./CLAUDE.md")
 ```
 
-Then display summary:
+**Display format:**
 ```
-═══════════════════════════════════════════════════════════
-DETECTED TARGETS
-═══════════════════════════════════════════════════════════
+════════════════════════════════════════════════════════════
+CLAUDE.MD TARGET FILES
+════════════════════════════════════════════════════════════
 
-  ✓ ~/.claude/CLAUDE.md    (Claude Code - always enabled)
-  ✓ ./CLAUDE.md            (Project)
-  ✗ AGENTS.md              (not found)
+  ~/.claude/CLAUDE.md (global)           42 lines  ✓
+  ./CLAUDE.md (project)                 156 lines  ⚠️
+  ./src/CLAUDE.md (subdirectory)         28 lines  ✓
+
+  AGENTS.md                              ✗ not found
+
+────────────────────────────────────────────────────────────
+⚠️  ./CLAUDE.md exceeds 150 lines
+    Tip: Run /reflect --dedupe to consolidate similar entries
+────────────────────────────────────────────────────────────
 
 To enable AGENTS.md (syncs to Codex, Cursor, Aider, Jules, Zed, Factory):
   touch AGENTS.md
 
-═══════════════════════════════════════════════════════════
+════════════════════════════════════════════════════════════
 ```
+
+**Logic:**
+- Show warning section only if ANY file exceeds 150 lines
+- List all files over threshold in the warning
+- Always suggest `--dedupe` as the remediation
 
 Exit after showing targets (don't process learnings).
 
