@@ -6,11 +6,13 @@
 [![Tests](https://img.shields.io/badge/tests-126%20passing-brightgreen?style=flat-square)](https://github.com/BayramAnnakov/claude-reflect/actions)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey?style=flat-square)](https://github.com/BayramAnnakov/claude-reflect#platform-support)
 
-A self-learning system for Claude Code that captures corrections, positive feedback, and preferences — then syncs them to CLAUDE.md and AGENTS.md.
+A self-learning system for Claude Code that captures corrections and discovers workflow patterns — turning them into permanent memory and reusable skills.
 
 ## What it does
 
-When you correct Claude Code during a session ("no, use gpt-5.1 not gpt-5", "use database for caching"), these corrections are captured and can be added to your CLAUDE.md files so Claude remembers them in future sessions.
+### 1. Learn from Corrections
+
+When you correct Claude ("no, use gpt-5.1 not gpt-5"), it remembers forever.
 
 ```
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
@@ -19,6 +21,29 @@ When you correct Claude Code during a session ("no, use gpt-5.1 not gpt-5", "use
 └─────────────────┘     └─────────────────┘     └─────────────────┘
       (automatic)            (automatic)            (manual review)
 ```
+
+### 2. Discover Workflow Patterns (NEW in v2)
+
+Analyzes your session history to find repeating tasks that could become reusable commands.
+
+```
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│  Your past      │ ──► │ /reflect-skills │ ──► │   Generates     │
+│  sessions       │     │ finds patterns  │     │   /commands     │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+    (68 sessions)         (AI-powered)            (you approve)
+```
+
+Example: You've asked "review my productivity" 12 times → suggests creating `/daily-review`
+
+## Key Features
+
+| Feature | What it does |
+|---------|--------------|
+| **Permanent Memory** | Corrections sync to CLAUDE.md — Claude remembers across sessions |
+| **Skill Discovery** | Finds repeating patterns in your history → generates commands |
+| **Multi-language** | AI understands corrections in any language |
+| **Skill Improvement** | Corrections during `/deploy` improve the deploy skill itself |
 
 ## Installation
 
