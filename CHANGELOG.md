@@ -5,6 +5,15 @@ All notable changes to claude-reflect will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] - 2026-01-25
+
+### Added
+- **Session Start Reminder** - New SessionStart hook shows pending learnings when you start a session (#13)
+  - Displays up to 5 learnings with confidence scores
+  - Reminds to run `/reflect` at the right time
+  - Can be disabled via `CLAUDE_REFLECT_REMINDER=false` environment variable
+  - Thanks to @xqliu for the contribution!
+
 ## [2.4.0] - 2026-01-23
 
 ### Added

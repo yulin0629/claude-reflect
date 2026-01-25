@@ -1,7 +1,7 @@
 # claude-reflect
 
 [![GitHub stars](https://img.shields.io/github/stars/BayramAnnakov/claude-reflect?style=flat-square)](https://github.com/BayramAnnakov/claude-reflect/stargazers)
-[![Version](https://img.shields.io/badge/version-2.4.0-blue?style=flat-square)](https://github.com/BayramAnnakov/claude-reflect/releases)
+[![Version](https://img.shields.io/badge/version-2.5.0-blue?style=flat-square)](https://github.com/BayramAnnakov/claude-reflect/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat-square)](https://opensource.org/licenses/MIT)
 [![Tests](https://img.shields.io/badge/tests-141%20passing-brightgreen?style=flat-square)](https://github.com/BayramAnnakov/claude-reflect/actions)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey?style=flat-square)](https://github.com/BayramAnnakov/claude-reflect#platform-support)
@@ -103,6 +103,7 @@ Hooks run automatically to detect and queue corrections:
 
 | Hook | Trigger | Purpose |
 |------|---------|---------|
+| `session_start_reminder.py` | Session start | Shows pending learnings reminder |
 | `capture_learning.py` | Every prompt | Detects correction patterns and queues them |
 | `check_learnings.py` | Before compaction | Backs up queue and informs user |
 | `post_commit_reminder.py` | After git commit | Reminds to run /reflect after completing work |

@@ -69,6 +69,7 @@ The plugin registers via `.claude-plugin/plugin.json`:
 
 | Hook | Script | Purpose |
 |------|--------|---------|
+| SessionStart | `session_start_reminder.py` | Show pending learnings reminder |
 | UserPromptSubmit | `capture_learning.py` | Detect corrections and queue them |
 | PreCompact | `check_learnings.py` | Backup queue before compaction |
 | PostToolUse (Bash) | `post_commit_reminder.py` | Remind to /reflect after commits |
