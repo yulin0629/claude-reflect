@@ -226,6 +226,11 @@ FALSE_POSITIVE_PATTERNS = [
     r"^(ok|okay|alright)[,.]?\s+(so|now|let)",  # Task continuations
 ]
 
+# Maximum prompt length for live capture (UserPromptSubmit hook)
+# Prompts longer than this are almost certainly system content, not user corrections.
+# Exception: explicit "remember:" markers are always processed regardless of length.
+MAX_CAPTURE_PROMPT_LENGTH = 500
+
 # Maximum message length for weak patterns (structural heuristic)
 # Long messages are more likely to be context/tasks than corrections
 MAX_WEAK_PATTERN_LENGTH = 150
@@ -415,20 +420,28 @@ def extract_user_messages(session_file: Path, corrections_only: bool = False) ->
     return messages
 
 
-def _should_include_message(text: str) -> bool:
-    """Check if a message should be included (apply filters from bash script)."""
+def should_include_message(text: str) -> bool:
+    """Check if a message should be included in learning detection.
+
+    Filters out system content like XML tags, JSON, tool results, and
+    session continuations that should never be treated as user corrections.
+
+    Used by both session file extraction and live capture (UserPromptSubmit hook).
+    """
     # Skip empty lines
     if not text.strip():
         return False
 
     # Skip lines starting with certain patterns
     skip_patterns = [
-        r"^<",              # XML tags
+        r"^<",              # XML tags (<task-notification>, <system-reminder>, etc.)
         r"^\[",             # Brackets
         r"^\{",             # JSON
         r"tool_result",
         r"tool_use_id",
         r"<command-",
+        r"<task-notification>",
+        r"<system-reminder>",
         r"This session is being continued",
         r"^Analysis:",
         r"^\*\*",           # Bold text
@@ -440,6 +453,10 @@ def _should_include_message(text: str) -> bool:
             return False
 
     return True
+
+
+# Backward-compatible alias
+_should_include_message = should_include_message
 
 
 def extract_tool_rejections(session_file: Path) -> List[str]:
