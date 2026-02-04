@@ -26,6 +26,7 @@ from lib.reflect_utils import (
     extract_tool_rejections,
     find_claude_files,
     suggest_claude_file,
+    should_include_message,
     EXCLUDED_DIRS,
 )
 
@@ -690,6 +691,134 @@ class TestSuggestClaudeFile(unittest.TestCase):
 
         result = suggest_claude_file("Use database connection pooling", files)
         self.assertIsNone(result)
+
+
+class TestShouldIncludeMessage(unittest.TestCase):
+    """Tests for should_include_message() — filters system content from user prompts."""
+
+    def test_normal_user_message_included(self):
+        """Normal user text should be included."""
+        self.assertTrue(should_include_message("no, use gpt-5.1 not gpt-5"))
+
+    def test_normal_correction_included(self):
+        """Corrections should be included."""
+        self.assertTrue(should_include_message("don't use sqlite, use postgres"))
+
+    def test_remember_marker_included(self):
+        """Explicit remember: markers should be included."""
+        self.assertTrue(should_include_message("remember: always use venv"))
+
+    def test_empty_string_excluded(self):
+        """Empty strings should be excluded."""
+        self.assertFalse(should_include_message(""))
+        self.assertFalse(should_include_message("   "))
+
+    def test_xml_tag_excluded(self):
+        """Messages starting with XML tags should be excluded."""
+        self.assertFalse(should_include_message("<task-notification>some content</task-notification>"))
+        self.assertFalse(should_include_message("<system-reminder>use X not Y</system-reminder>"))
+
+    def test_json_excluded(self):
+        """Messages starting with JSON should be excluded."""
+        self.assertFalse(should_include_message('{"prompt": "no, use X"}'))
+
+    def test_tool_result_excluded(self):
+        """Messages containing tool_result should be excluded."""
+        self.assertFalse(should_include_message("tool_result content here"))
+
+    def test_session_continuation_excluded(self):
+        """Session continuation markers should be excluded."""
+        self.assertFalse(should_include_message(
+            "This session is being continued from a previous conversation"
+        ))
+
+    def test_system_reminder_with_correction_pattern(self):
+        """System reminders containing correction-like text should still be excluded."""
+        msg = '<system-reminder>use context7 mcp every time, don\'t use old API</system-reminder>'
+        self.assertFalse(should_include_message(msg))
+
+    def test_task_notification_with_correction_pattern(self):
+        """Task notifications with correction patterns should be excluded."""
+        msg = (
+            '<task-notification>Skill "superpowers:using-superpowers" '
+            'loaded. Don\'t use deprecated patterns.</task-notification>'
+        )
+        self.assertFalse(should_include_message(msg))
+
+    def test_bracket_start_excluded(self):
+        """Messages starting with brackets should be excluded."""
+        self.assertFalse(should_include_message("[tool_use_id: abc123]"))
+
+    def test_analysis_start_excluded(self):
+        """Messages starting with 'Analysis:' should be excluded."""
+        self.assertFalse(should_include_message("Analysis: the code uses X not Y"))
+
+    def test_bold_text_excluded(self):
+        """Messages starting with bold markdown should be excluded."""
+        self.assertFalse(should_include_message("**Note:** don't use this pattern"))
+
+
+class TestCaptureLearningFiltering(unittest.TestCase):
+    """Integration tests for capture_learning.py filtering logic.
+
+    These tests verify that the two-layer filter (should_include_message +
+    MAX_CAPTURE_PROMPT_LENGTH) correctly blocks false positives from system
+    content while allowing real user corrections through.
+    """
+
+    def test_system_content_blocked_before_detect_patterns(self):
+        """System content should be filtered BEFORE reaching detect_patterns."""
+        # This is the key false-positive scenario: system-reminder contains
+        # correction-like text ("use X not Y") but should never be captured.
+        system_msg = '<system-reminder>use context7 mcp every time</system-reminder>'
+        self.assertFalse(should_include_message(system_msg))
+
+        # In contrast, a real user correction should pass the filter
+        real_correction = "no, use gpt-5.1 not gpt-5"
+        self.assertTrue(should_include_message(real_correction))
+
+    def test_long_prompt_blocked(self):
+        """Prompts longer than MAX_CAPTURE_PROMPT_LENGTH should be blocked."""
+        from lib.reflect_utils import MAX_CAPTURE_PROMPT_LENGTH
+
+        long_prompt = "a" * (MAX_CAPTURE_PROMPT_LENGTH + 1)
+        # Simulates the check in capture_learning.py
+        should_skip = len(long_prompt) > MAX_CAPTURE_PROMPT_LENGTH and "remember:" not in long_prompt.lower()
+        self.assertTrue(should_skip)
+
+    def test_long_prompt_with_remember_allowed(self):
+        """Long prompts with 'remember:' should still be processed."""
+        from lib.reflect_utils import MAX_CAPTURE_PROMPT_LENGTH
+
+        long_remember = "remember: " + "a" * MAX_CAPTURE_PROMPT_LENGTH
+        should_skip = len(long_remember) > MAX_CAPTURE_PROMPT_LENGTH and "remember:" not in long_remember.lower()
+        self.assertFalse(should_skip)
+
+    def test_short_real_correction_passes_both_filters(self):
+        """A real, short user correction should pass both filters."""
+        from lib.reflect_utils import MAX_CAPTURE_PROMPT_LENGTH
+
+        msg = "no, use postgres not sqlite"
+        self.assertTrue(should_include_message(msg))
+        self.assertLessEqual(len(msg), MAX_CAPTURE_PROMPT_LENGTH)
+
+    def test_task_notification_false_positive(self):
+        """Reproduce the exact false positive: task-notification with 'use' pattern."""
+        msg = (
+            '<task-notification>Skill "superpowers:using-superpowers" '
+            "has been loaded and added to the conversation. "
+            "Use the skill in your next response.</task-notification>"
+        )
+        # This must be filtered out — it's system content, not a user correction
+        self.assertFalse(should_include_message(msg))
+
+    def test_session_continuation_false_positive(self):
+        """Reproduce false positive: session continuation with correction patterns."""
+        msg = (
+            "This session is being continued from a previous conversation. "
+            "Don't use the old API, use the new one instead."
+        )
+        self.assertFalse(should_include_message(msg))
 
 
 if __name__ == "__main__":

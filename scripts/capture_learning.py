@@ -18,6 +18,8 @@ from lib.reflect_utils import (
     save_queue,
     detect_patterns,
     create_queue_item,
+    should_include_message,
+    MAX_CAPTURE_PROMPT_LENGTH,
 )
 
 
@@ -36,6 +38,15 @@ def main() -> int:
     # Extract prompt from JSON - handle different possible field names
     prompt = data.get("prompt") or data.get("message") or data.get("text")
     if not prompt:
+        return 0
+
+    # Filter out system content (XML tags, tool results, session continuations)
+    if not should_include_message(prompt):
+        return 0
+
+    # Skip very long prompts — real user corrections are short.
+    # Exception: explicit "remember:" markers are always processed.
+    if len(prompt) > MAX_CAPTURE_PROMPT_LENGTH and "remember:" not in prompt.lower():
         return 0
 
     # Initialize queue if doesn't exist
