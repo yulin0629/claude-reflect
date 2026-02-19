@@ -129,7 +129,22 @@ class TestTimestampUtilities(unittest.TestCase):
 
 
 class TestPatternDetection(unittest.TestCase):
-    """Tests for pattern detection."""
+    """Tests for pattern detection.
+
+    detect_patterns() now uses a 3-layer approach:
+    1. Regex for "remember:" (always)
+    2. Regex for false positive filtering (always)
+    3. Embedding daemon for classification (mocked in tests)
+
+    Tests that check specific pattern names are updated to be agnostic about
+    the exact pattern name, since the embedding daemon returns different names.
+    """
+
+    def _mock_daemon(self, return_value):
+        """Create a patch that mocks the embedding daemon."""
+        return patch("lib.reflect_utils.classify_via_daemon", return_value=return_value)
+
+    # --- Layer 1: "remember:" regex (always active, no daemon needed) ---
 
     def test_explicit_remember_pattern(self):
         """Test detection of explicit remember: marker."""
@@ -141,179 +156,88 @@ class TestPatternDetection(unittest.TestCase):
         self.assertEqual(confidence, 0.90)
         self.assertEqual(decay, 120)
 
-    def test_positive_pattern_perfect(self):
-        """Test detection of positive feedback."""
-        result = detect_patterns("perfect! that's exactly what I wanted")
-        item_type, patterns, confidence, sentiment, decay = result
+    # --- Layer 2: False positive rejection (always active, no daemon needed) ---
 
-        self.assertEqual(item_type, "positive")
-        self.assertEqual(sentiment, "positive")
-        self.assertGreaterEqual(confidence, 0.70)
-
-    def test_correction_no_use(self):
-        """Test detection of 'no, use' correction."""
-        result = detect_patterns("no, use Python instead")
-        item_type, patterns, confidence, sentiment, decay = result
-
-        self.assertEqual(item_type, "auto")
-        self.assertIn("no,", patterns)
-        self.assertEqual(sentiment, "correction")
-
-    def test_correction_dont_use(self):
-        """Test detection of 'don't use' correction."""
-        result = detect_patterns("don't use that library")
-        item_type, patterns, confidence, sentiment, decay = result
-
-        self.assertEqual(item_type, "auto")
-        self.assertIn("don't", patterns)
-
-    def test_correction_stop_using(self):
-        """Test detection of 'stop using' correction."""
-        result = detect_patterns("stop using that approach")
-        item_type, patterns, confidence, sentiment, decay = result
-
-        self.assertEqual(item_type, "auto")
-        self.assertIn("stop/never", patterns)
-
-    def test_correction_never_use(self):
-        """Test detection of 'never use' correction."""
-        result = detect_patterns("never use global variables")
-        item_type, patterns, confidence, sentiment, decay = result
-
-        self.assertEqual(item_type, "auto")
-        self.assertIn("stop/never", patterns)
-
-    def test_correction_thats_wrong(self):
-        """Test detection of 'that's wrong' correction."""
-        result = detect_patterns("that's wrong, the API returns JSON")
-        item_type, patterns, confidence, sentiment, decay = result
-
-        self.assertEqual(item_type, "auto")
-        self.assertIn("that's-wrong", patterns)
-
-    def test_correction_i_told_you_high_confidence(self):
-        """Test that 'I told you' gets high confidence."""
-        result = detect_patterns("I told you to use async")
-        item_type, patterns, confidence, sentiment, decay = result
-
-        self.assertEqual(item_type, "auto")
-        self.assertIn("I-told-you", patterns)
-        # Base 0.85 + 0.10 short message boost = 0.90 (capped)
-        self.assertGreaterEqual(confidence, 0.85)
-        self.assertEqual(decay, 120)
-
-    def test_multiple_patterns_high_confidence(self):
-        """Test multiple patterns increase confidence."""
-        result = detect_patterns("no, don't use that, you should use Python")
-        item_type, patterns, confidence, sentiment, decay = result
-
-        self.assertEqual(item_type, "auto")
-        self.assertGreaterEqual(confidence, 0.75)
-
-    def test_guardrail_dont_add_unless(self):
-        """Test detection of 'don't add X unless' guardrail pattern."""
-        result = detect_patterns("don't add docstrings unless I explicitly ask")
-        item_type, patterns, confidence, sentiment, decay = result
-
-        self.assertEqual(item_type, "guardrail")
-        self.assertIn("dont-unless-asked", patterns)
-        self.assertGreaterEqual(confidence, 0.90)
-        self.assertEqual(decay, 120)
-
-    def test_guardrail_only_change_what_asked(self):
-        """Test detection of 'only change what I asked' guardrail pattern."""
-        result = detect_patterns("only change what I asked you to change")
-        item_type, patterns, confidence, sentiment, decay = result
-
-        self.assertEqual(item_type, "guardrail")
-        self.assertIn("only-what-asked", patterns)
-        self.assertGreaterEqual(confidence, 0.90)
-
-    def test_guardrail_stop_refactoring(self):
-        """Test detection of 'stop refactoring unrelated' guardrail pattern."""
-        result = detect_patterns("stop refactoring unrelated code")
-        item_type, patterns, confidence, sentiment, decay = result
-
-        self.assertEqual(item_type, "guardrail")
-        self.assertIn("stop-unrelated", patterns)
-
-    def test_guardrail_dont_over_engineer(self):
-        """Test detection of 'don't over-engineer' guardrail pattern."""
-        result = detect_patterns("don't over-engineer this solution")
-        item_type, patterns, confidence, sentiment, decay = result
-
-        self.assertEqual(item_type, "guardrail")
-        self.assertIn("dont-over-engineer", patterns)
-
-    def test_guardrail_leave_alone(self):
-        """Test detection of 'leave X alone' guardrail pattern."""
-        result = detect_patterns("leave the existing code alone")
-        item_type, patterns, confidence, sentiment, decay = result
-
-        self.assertEqual(item_type, "guardrail")
-        self.assertIn("leave-alone", patterns)
-
-    def test_guardrail_minimal_changes(self):
-        """Test detection of 'minimal changes' guardrail pattern."""
-        result = detect_patterns("only make minimal changes please")
-        item_type, patterns, confidence, sentiment, decay = result
-
-        self.assertEqual(item_type, "guardrail")
-        self.assertIn("minimal-changes", patterns)
-
-    def test_no_pattern_match(self):
-        """Test text without patterns returns None type."""
+    def test_no_pattern_match_question(self):
+        """Test that questions (ending with ?) are rejected by false positive filter."""
         result = detect_patterns("Hello, how are you?")
         item_type, patterns, confidence, sentiment, decay = result
-
         self.assertIsNone(item_type)
-        self.assertEqual(patterns, "")
 
     def test_false_positive_question_rejected(self):
         """Test that questions (ending with ?) are rejected."""
         result = detect_patterns("can you figure out how to make this fit?")
         item_type, patterns, confidence, sentiment, decay = result
-
         self.assertIsNone(item_type)
 
     def test_false_positive_task_request_rejected(self):
         """Test that task requests are rejected."""
         result = detect_patterns("please help me fix this issue")
         item_type, patterns, confidence, sentiment, decay = result
-
         self.assertIsNone(item_type)
 
     def test_false_positive_error_description_rejected(self):
         """Test that error descriptions are rejected."""
         result = detect_patterns("the error is: could not connect to database")
         item_type, patterns, confidence, sentiment, decay = result
-
         self.assertIsNone(item_type)
 
     def test_false_positive_bug_report_rejected(self):
         """Test that bug reports are rejected."""
         result = detect_patterns("it just opens and closes, is not working")
         item_type, patterns, confidence, sentiment, decay = result
-
         self.assertIsNone(item_type)
 
-    def test_short_message_confidence_boost(self):
-        """Test that short messages get a confidence boost."""
-        result = detect_patterns("no, use gpt-5.1")
-        item_type, patterns, confidence, sentiment, decay = result
+    # --- Layer 3: Embedding daemon (mocked) ---
 
+    @patch("lib.daemon_client.classify_via_daemon",
+           return_value=("auto", "embedding:correction", 0.75, "correction", 90))
+    def test_correction_via_daemon(self, mock_daemon):
+        """Test that corrections are detected via embedding daemon."""
+        result = detect_patterns("no, use Python instead")
+        item_type, patterns, confidence, sentiment, decay = result
         self.assertEqual(item_type, "auto")
-        self.assertGreaterEqual(confidence, 0.75)  # Boosted for short message
+        self.assertEqual(sentiment, "correction")
+        mock_daemon.assert_called_once_with("no, use Python instead")
 
-    def test_long_message_confidence_reduced(self):
-        """Test that long messages get reduced confidence."""
-        long_msg = "no, " + "this is a very long explanation " * 15
-        result = detect_patterns(long_msg)
+    @patch("lib.daemon_client.classify_via_daemon",
+           return_value=("guardrail", "embedding:guardrail", 0.85, "correction", 120))
+    def test_guardrail_via_daemon(self, mock_daemon):
+        """Test guardrail detection via embedding daemon."""
+        result = detect_patterns("don't add docstrings unless I explicitly ask")
         item_type, patterns, confidence, sentiment, decay = result
+        self.assertEqual(item_type, "guardrail")
+        self.assertGreaterEqual(confidence, 0.85)
+        self.assertEqual(decay, 120)
 
-        # Should still match but with lower confidence
-        if item_type == "auto":
-            self.assertLessEqual(confidence, 0.65)
+    @patch("lib.daemon_client.classify_via_daemon",
+           return_value=("positive", "embedding:positive", 0.70, "positive", 90))
+    def test_positive_via_daemon(self, mock_daemon):
+        """Test positive feedback detection via embedding daemon."""
+        result = detect_patterns("perfect! that's exactly what I wanted")
+        item_type, patterns, confidence, sentiment, decay = result
+        self.assertEqual(item_type, "positive")
+        self.assertEqual(sentiment, "positive")
+
+    @patch("lib.daemon_client.classify_via_daemon",
+           return_value=(None, "", 0.0, "correction", 90))
+    def test_no_match_via_daemon(self, mock_daemon):
+        """Test that non-matching messages return None via daemon."""
+        # Use a message that passes false positive filter
+        result = detect_patterns("let me think about this approach")
+        item_type, patterns, confidence, sentiment, decay = result
+        self.assertIsNone(item_type)
+
+    # --- Graceful degradation ---
+
+    def test_daemon_import_failure_returns_none(self):
+        """Test that ImportError when daemon_client missing causes fallback."""
+        # When daemon_client is not importable, detect_patterns falls back
+        with patch.dict("sys.modules", {"lib.daemon_client": None}):
+            result = detect_patterns("no, use this instead")
+            # Should fall through to the final fallback
+            self.assertEqual(len(result), 5)
+            self.assertIsNone(result[0])
 
 
 class TestQueueItemCreation(unittest.TestCase):

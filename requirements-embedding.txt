@@ -1,0 +1,8 @@
+# Optional dependencies for local ONNX embedding classification.
+# Install with: pip install -r requirements-embedding.txt
+# Or use uv: uv run --with onnxruntime --with tokenizers --with numpy
+onnxruntime>=1.16.0
+tokenizers>=0.15.0
+numpy>=1.24.0
+# Only needed for model quantization (download_model.py):
+onnx>=1.14.0
