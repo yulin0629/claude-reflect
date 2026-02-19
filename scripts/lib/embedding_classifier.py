@@ -125,7 +125,11 @@ class EmbeddingModel:
 
 
 class AnchorStore:
-    """Pre-computed anchor embeddings for classification."""
+    """Pre-computed anchor embeddings for classification.
+
+    Stores individual anchor embeddings per category (not averaged centroids)
+    to preserve the discriminative power of each anchor sentence.
+    """
 
     def __init__(self, model: EmbeddingModel, anchors_path: Optional[Path] = None):
         self.model = model
@@ -133,14 +137,16 @@ class AnchorStore:
         self.category_embeddings: Dict[str, np.ndarray] = {}
 
     def compute(self) -> None:
-        """Compute anchor embeddings for all categories."""
+        """Compute anchor embeddings for all categories.
+
+        Stores a (N, hidden_dim) array per category where N is the number
+        of anchor sentences, enabling max-similarity classification.
+        """
         with open(self.anchors_path, "r", encoding="utf-8") as f:
             anchors = json.load(f)
 
         for category, sentences in anchors.items():
-            embeddings = self.model.embed_batch(sentences)
-            # Store mean of all anchor embeddings per category
-            self.category_embeddings[category] = np.mean(embeddings, axis=0)
+            self.category_embeddings[category] = self.model.embed_batch(sentences)
 
     @property
     def is_computed(self) -> bool:
@@ -157,7 +163,11 @@ def classify_message(
     model: EmbeddingModel,
     anchor_store: AnchorStore,
 ) -> Tuple[Optional[str], str, float, str, int]:
-    """Classify a message using embedding similarity.
+    """Classify a message using max-similarity against individual anchors.
+
+    For each category, computes cosine similarity against every anchor sentence
+    and takes the maximum. This preserves discriminative power across languages
+    (a Japanese correction only needs to match one Japanese anchor strongly).
 
     Returns:
         Tuple matching detect_patterns() signature:
@@ -165,10 +175,11 @@ def classify_message(
     """
     text_embedding = model.embed(text)
 
-    # Compute similarities to each category
+    # Max similarity: best match across all anchors per category
     similarities: Dict[str, float] = {}
-    for category, anchor_emb in anchor_store.category_embeddings.items():
-        similarities[category] = cosine_similarity(text_embedding, anchor_emb)
+    for category, anchor_embs in anchor_store.category_embeddings.items():
+        scores = anchor_embs @ text_embedding  # (N,) dot products (L2-normalized)
+        similarities[category] = float(np.max(scores))
 
     # Find the best matching category
     best_category = max(similarities, key=similarities.get)
