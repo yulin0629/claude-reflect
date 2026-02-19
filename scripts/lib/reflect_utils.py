@@ -440,7 +440,8 @@ def backup_timestamp() -> str:
 # These focus on MESSAGE STRUCTURE rather than specific words.
 # Kept even with embedding detection — structural signals are <1ms and language-agnostic.
 FALSE_POSITIVE_PATTERNS = [
-    r"\?$",  # Ends with question mark → question, not correction
+    r"[?\uff1f]$",  # Ends with question mark (ASCII ? or full-width ？)
+    r"[嗎吗呢か까]$",  # Ends with CJK question particle
     r"^(please|can you|could you|would you|help me)\b",  # Task request openers
     r"(help|fix|check|review|figure out|set up)\s+(this|that|it|the)\b",  # Task verbs
     r"(error|failed|could not|cannot|can't|unable to)\s+\w+",  # Error descriptions
@@ -475,6 +476,10 @@ def detect_patterns(text: str) -> Tuple[Optional[str], str, float, str, int]:
     # Priority 0: "remember:" — explicit marker, must never miss (regex)
     if re.search(r"remember:", text, re.IGNORECASE):
         return ("explicit", "remember:", 0.90, "correction", 120)
+
+    # Priority 0.5: Too short to be actionable (e.g. "廢話", "OK", "好")
+    if len(text.strip()) <= 4:
+        return (None, "", 0.0, "correction", 90)
 
     # Priority 1: Structural false positive filter (regex, language-agnostic, <1ms)
     for fp_pattern in FALSE_POSITIVE_PATTERNS:
