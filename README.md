@@ -1,9 +1,9 @@
 # claude-reflect
 
 [![GitHub stars](https://img.shields.io/github/stars/BayramAnnakov/claude-reflect?style=flat-square)](https://github.com/BayramAnnakov/claude-reflect/stargazers)
-[![Version](https://img.shields.io/badge/version-2.6.0-blue?style=flat-square)](https://github.com/BayramAnnakov/claude-reflect/releases)
+[![Version](https://img.shields.io/badge/version-4.0.0--rc.1-blue?style=flat-square)](https://github.com/BayramAnnakov/claude-reflect/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat-square)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/tests-160%20passing-brightgreen?style=flat-square)](https://github.com/BayramAnnakov/claude-reflect/actions)
+[![Tests](https://img.shields.io/badge/tests-222%20passing-brightgreen?style=flat-square)](https://github.com/BayramAnnakov/claude-reflect/actions)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey?style=flat-square)](https://github.com/BayramAnnakov/claude-reflect#platform-support)
 
 A self-learning system for Claude Code that captures corrections and discovers workflow patterns — turning them into permanent memory and reusable skills.
@@ -42,7 +42,7 @@ Example: You've asked "review my productivity" 12 times → suggests creating `/
 |---------|--------------|
 | **Permanent Memory** | Corrections sync to CLAUDE.md — Claude remembers across sessions |
 | **Skill Discovery** | Finds repeating patterns in your history → generates commands |
-| **Multi-language** | AI understands corrections in any language |
+| **Multi-language** | Local ONNX embedding detects corrections in en/zh/ja/ko/fr/de/ru |
 | **Skill Improvement** | Corrections during `/deploy` improve the deploy skill itself |
 
 ## Installation
@@ -65,6 +65,17 @@ After installation, **restart Claude Code** (exit and reopen). Then hooks auto-c
 
 - [Claude Code](https://claude.ai/code) CLI installed
 - Python 3.6+ (included on most systems)
+
+### Optional: Local Embedding (Multilingual Detection)
+
+For multilingual correction detection, install the embedding dependencies:
+
+```bash
+pip install onnxruntime tokenizers numpy onnx
+python scripts/download_model.py   # Downloads ~470MB, quantizes to ~113MB
+```
+
+The embedding server starts automatically at session start. Without it, `remember:` markers and false-positive filtering still work.
 
 ### Platform Support
 
@@ -114,26 +125,31 @@ Run `/reflect` to review and apply queued learnings to CLAUDE.md.
 
 ### Detection Methods
 
-Claude-reflect uses a **hybrid detection approach**:
+Claude-reflect uses a **3-layer detection pipeline**:
 
-**1. Regex patterns (real-time capture)**
+**1. Regex: "remember:" marker** (always active)
+- Explicit `"remember: ..."` markers are captured with highest confidence
+- Cannot be missed regardless of language or context
 
-Fast pattern matching during sessions detects:
+**2. Regex: False positive filter** (always active, <1ms)
+- Structural patterns reject questions, task requests, error descriptions, bug reports
+- Language-agnostic — focuses on message structure, not specific words
 
-- **Corrections**: `"no, use X"` / `"don't use Y"` / `"actually..."` / `"that's wrong"`
-- **Positive feedback**: `"Perfect!"` / `"Exactly right"` / `"Great approach"`
-- **Explicit markers**: `"remember:"` — highest confidence
+**3. Local ONNX embedding** (real-time, ~20ms)
+- Model: `intfloat/multilingual-e5-small` (INT8 quantized, ~113 MB)
+- Cosine similarity against multilingual anchor embeddings
+- Categories: correction, guardrail, positive, not_learning
+- Languages: en, zh-TW, ja, ko, fr, de, ru
+- Persistent daemon via Unix socket (model loaded once at session start)
+- Graceful degradation: if unavailable, messages pass through without classification
 
-**2. Semantic AI validation (during /reflect)**
+**4. Semantic AI validation (during /reflect)**
 
-When you run `/reflect`, an AI-powered semantic filter:
-- **Multi-language support** — understands corrections in any language
-- **Better accuracy** — filters out false positives from regex
+When you run `/reflect`, an additional AI-powered semantic filter:
+- **Better accuracy** — filters out remaining false positives
 - **Cleaner learnings** — extracts concise, actionable statements
 
-Example: A Spanish correction like `"no, usa Python"` is correctly detected even though it doesn't match English patterns.
-
-Each captured learning has a **confidence score** (0.60-0.95). The final score is the higher of regex and semantic confidence.
+Each captured learning has a **confidence score** (0.60-0.95).
 
 ### Human Review
 
@@ -316,16 +332,23 @@ claude-reflect/
 │   └── hooks.json          # Auto-configured when plugin installed
 ├── scripts/
 │   ├── lib/
-│   │   ├── reflect_utils.py      # Shared utilities
-│   │   └── semantic_detector.py  # AI-powered semantic analysis
-│   ├── capture_learning.py       # Hook: detect corrections
-│   ├── check_learnings.py        # Hook: pre-compact check
-│   ├── post_commit_reminder.py   # Hook: post-commit reminder
-│   ├── compare_detection.py      # Compare regex vs semantic detection
+│   │   ├── reflect_utils.py        # Shared utilities (3-layer detect_patterns)
+│   │   ├── semantic_detector.py    # AI-powered semantic analysis
+│   │   ├── embedding_classifier.py # ONNX model loading & classification
+│   │   ├── daemon_client.py        # Unix socket client for embedding server
+│   │   └── anchors.json            # Multilingual anchor sentences
+│   ├── capture_learning.py         # Hook: detect corrections
+│   ├── check_learnings.py          # Hook: pre-compact check
+│   ├── post_commit_reminder.py     # Hook: post-commit reminder
+│   ├── embedding_server.py         # Persistent embedding daemon
+│   ├── ensure_embedding_server.py  # Hook: start daemon at session start
+│   ├── download_model.py           # Download & quantize ONNX model
+│   ├── benchmark_embedding.py      # Benchmark: latency & accuracy
+│   ├── compare_detection.py        # Compare regex vs semantic detection
 │   ├── extract_session_learnings.py
 │   ├── extract_tool_errors.py
 │   ├── extract_tool_rejections.py
-│   └── legacy/                   # Bash scripts (deprecated)
+│   └── legacy/                     # Bash scripts (deprecated)
 ├── tests/                  # Test suite
 └── SKILL.md                # Skill context for Claude
 ```
