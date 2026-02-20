@@ -485,7 +485,8 @@ GUARDRAIL_PATTERNS = [
 # Structural patterns indicating FALSE POSITIVES (language-agnostic)
 # These focus on MESSAGE STRUCTURE rather than specific words
 FALSE_POSITIVE_PATTERNS = [
-    r"\?$",  # Ends with question mark → question, not correction
+    r"[?\uff1f]$",  # Ends with question mark (ASCII ? or full-width ？)
+    r"[嗎吗呢か까]$",  # Ends with CJK question particle
     r"^(please|can you|could you|would you|help me)\b",  # Task request openers
     r"(help|fix|check|review|figure out|set up)\s+(this|that|it|the)\b",  # Task verbs
     r"(error|failed|could not|cannot|can't|unable to)\s+\w+",  # Error descriptions
@@ -523,6 +524,10 @@ def detect_patterns(text: str) -> Tuple[Optional[str], str, float, str, int]:
     for pattern, name, confidence, decay in EXPLICIT_PATTERNS:
         if re.search(pattern, text, re.IGNORECASE):
             return ("explicit", name, confidence, "correction", decay)
+
+    # Too short to be actionable (e.g. "OK", "好")
+    if len(text.strip()) <= 4:
+        return (None, "", 0.0, "correction", 90)
 
     # Check for guardrail patterns - "don't do X unless" constraints
     # These are high-confidence corrections about unwanted behavior

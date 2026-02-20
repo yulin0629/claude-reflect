@@ -315,6 +315,24 @@ class TestPatternDetection(unittest.TestCase):
         if item_type == "auto":
             self.assertLessEqual(confidence, 0.65)
 
+    def test_short_message_rejected(self):
+        """Test that very short messages (<=4 chars) are rejected."""
+        result = detect_patterns("OK")
+        self.assertIsNone(result[0])
+
+        result = detect_patterns("好")
+        self.assertIsNone(result[0])
+
+    def test_cjk_question_particle_rejected(self):
+        """Test that messages ending with CJK question particles are rejected."""
+        result = detect_patterns("這是什麼嗎")
+        self.assertIsNone(result[0])
+
+    def test_fullwidth_question_mark_rejected(self):
+        """Test that full-width question marks are rejected."""
+        result = detect_patterns("這是什麼？")
+        self.assertIsNone(result[0])
+
 
 class TestQueueItemCreation(unittest.TestCase):
     """Tests for queue item creation."""
