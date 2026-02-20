@@ -14,7 +14,7 @@ claude-reflect is a Claude Code plugin that implements a two-stage self-learning
 .claude-plugin/plugin.json  → Plugin manifest, points to hooks
 hooks/hooks.json            → Hook definitions (SessionStart, UserPromptSubmit, PreCompact, PostToolUse)
 scripts/                    → Python scripts for hooks and extraction
-scripts/lib/                → Shared utilities (reflect_utils.py, embedding_classifier.py, daemon_client.py)
+scripts/lib/                → Shared utilities (reflect_utils.py, semantic_detector.py)
 scripts/legacy/             → Deprecated bash scripts (for reference)
 commands/*.md               → Skill definitions for /reflect, /reflect-skills, /skip-reflect, /view-queue
 SKILL.md                    → Context provided when plugin is invoked
@@ -43,16 +43,9 @@ tests/                      → Test suite (pytest)
 
 ### Key Files
 
-- `scripts/lib/reflect_utils.py`: Shared utilities (paths, queue ops, 3-layer detect_patterns, memory hierarchy discovery, auto memory, rule frontmatter parsing)
-- `scripts/lib/embedding_classifier.py`: ONNX model loading, embedding, cosine similarity classification
-- `scripts/lib/daemon_client.py`: Unix socket client for embedding server, graceful degradation
-- `scripts/lib/anchors.json`: Multilingual anchor sentences (correction, guardrail, positive, not_learning)
+- `scripts/lib/reflect_utils.py`: Shared utilities (paths, queue ops, detect_patterns, memory hierarchy discovery, auto memory, rule frontmatter parsing)
 - `scripts/lib/semantic_detector.py`: AI-powered semantic analysis via `claude -p`
-- `scripts/capture_learning.py`: Pattern detection (correction, positive, explicit markers) with confidence scoring
-- `scripts/embedding_server.py`: Persistent daemon — loads ONNX model once, serves via Unix socket
-- `scripts/ensure_embedding_server.py`: SessionStart hook to pre-warm embedding daemon
-- `scripts/download_model.py`: Downloads multilingual-e5-small from HuggingFace + INT8 quantization
-- `scripts/benchmark_embedding.py`: Measures embedding latency, accuracy vs regex
+- `scripts/capture_learning.py`: Pattern detection (explicit markers, passthrough) with confidence scoring
 - `scripts/check_learnings.py`: PreCompact hook that backs up queue before context compaction
 - `scripts/extract_session_learnings.py`: Extracts user messages from session JSONL files
 - `scripts/extract_tool_rejections.py`: Extracts user corrections from tool rejections
@@ -78,13 +71,7 @@ python -m pytest tests/ -v
 # Clear queue for testing
 echo "[]" > ~/.claude/learnings-queue.json
 
-# Embedding setup (optional, for multilingual detection)
-pip install onnxruntime tokenizers numpy onnx
-python scripts/download_model.py           # Download + quantize model (~113MB)
-python scripts/benchmark_embedding.py      # Measure latency & accuracy
-python scripts/embedding_server.py &       # Start daemon manually
-
-# Test multilingual detection with daemon running
+# Test passthrough capture (queued as auto, validated by /reflect AI)
 echo '{"prompt":"不要用那個，改用這個"}' | python3 scripts/capture_learning.py
 ```
 
@@ -100,64 +87,33 @@ The plugin registers via `.claude-plugin/plugin.json`:
 | Hook | Script | Purpose |
 |------|--------|---------|
 | SessionStart | `session_start_reminder.py` | Show pending learnings reminder |
-| SessionStart | `ensure_embedding_server.py` | Pre-warm embedding daemon |
 | UserPromptSubmit | `capture_learning.py` | Detect corrections and queue them |
 | PreCompact | `check_learnings.py` | Backup queue before compaction |
 | PostToolUse (Bash) | `post_commit_reminder.py` | Remind to /reflect after commits |
 
 ## Detection Methods
 
-### 3-Layer Detection Pipeline (Real-time)
+### Two-Stage Detection
 
-`detect_patterns()` in `scripts/lib/reflect_utils.py` uses a layered approach:
+**Stage 1: Real-time Capture** (`detect_patterns()` in `scripts/lib/reflect_utils.py`, <1ms)
 
 1. **Regex: "remember:"** — Explicit marker, highest priority, never misses
-2. **Regex: False positive filter** — Structural patterns (questions, task requests, error descriptions), language-agnostic, <1ms
-3. **Embedding daemon** — Local ONNX model (multilingual-e5-small INT8), cosine similarity vs anchor embeddings, ~20ms
+2. **Regex: Guardrail patterns** — "don't do X unless" constraints, high confidence (0.85-0.90)
+3. **Regex: False positive filter** — Structural patterns (questions, task requests, error descriptions), language-agnostic, includes CJK question particles
+4. **Regex: Positive/Correction patterns** — English-centric patterns with confidence scoring (0.55-0.90)
+5. **Passthrough** — Non-English or unmatched messages queued as "auto" (0.50) for /reflect AI validation
 
-### Local Embedding Classification
-
-`scripts/lib/embedding_classifier.py` provides multilingual classification:
-- Model: `intfloat/multilingual-e5-small` (INT8 quantized, ~113 MB)
-- Categories: correction, guardrail, positive, not_learning
-- Anchors: 16+ sentences per category in en/zh-TW/ja/ko/fr/de/ru
-- Persistent daemon via Unix socket (`scripts/embedding_server.py`)
-
-Key files:
-- `scripts/lib/embedding_classifier.py` — ONNX model loading, embed, classify
-- `scripts/lib/anchors.json` — Multilingual anchor sentences
-- `scripts/lib/daemon_client.py` — Socket client with graceful degradation
-- `scripts/embedding_server.py` — Persistent daemon (model loaded once)
-- `scripts/ensure_embedding_server.py` — SessionStart hook to pre-warm daemon
-- `scripts/download_model.py` — Model download + INT8 quantization
-
-Setup:
-```bash
-pip install onnxruntime tokenizers numpy onnx
-python scripts/download_model.py       # Download + quantize model
-python scripts/embedding_server.py &   # Start daemon (or let SessionStart hook do it)
-```
-
-Fallback: If embedding daemon is unavailable, messages pass through without classification (silent degradation).
-
-### Semantic AI Validation (During /reflect)
+**Stage 2: AI Validation** (during `/reflect`)
 
 `scripts/lib/semantic_detector.py` provides AI-powered validation:
 - Uses `claude -p --output-format json` for semantic analysis
 - **Multi-language support** — works for any language, not just English
-- **Better accuracy** — filters out false positives
+- **High accuracy** — filters out false positives
 - **Cleaner learnings** — extracts concise, actionable statements
 
 Key functions:
 - `semantic_analyze(text)` — analyze single message
 - `validate_queue_items(items)` — batch validate queue items
-
-### Comparison Testing
-
-`scripts/compare_detection.py` compares regex vs semantic detection:
-```bash
-python scripts/compare_detection.py --project .
-```
 
 ## Session File Format
 

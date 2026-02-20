@@ -10,7 +10,7 @@ A two-stage system that helps Claude Code learn from user corrections.
 ## How It Works
 
 **Stage 1: Capture (Automatic)**
-Hooks detect correction patterns using local ONNX embedding (multilingual) and queue them to `~/.claude/learnings-queue.json`.
+Hooks detect `remember:` markers and pass other messages through a structural false-positive filter, queuing candidates to `~/.claude/learnings-queue.json`.
 
 **Stage 2: Process (Manual)**
 User runs `/reflect` to review and apply queued learnings to CLAUDE.md files.
@@ -36,11 +36,17 @@ Remind users about `/reflect` when:
 
 ## Correction Detection
 
-Uses a 3-layer detection pipeline:
+Uses a two-stage detection approach:
 
+**Real-time (automatic, <1ms):**
 1. **Regex: "remember:"** — Explicit marker, highest priority, never misses
 2. **Regex: False positive filter** — Structural patterns (questions, task requests), language-agnostic
-3. **Embedding daemon** — Local ONNX model (multilingual-e5-small INT8), cosine similarity vs anchor embeddings, supports en/zh/ja/ko/fr/de/ru
+3. **Passthrough** — Everything else is queued as "auto" with low confidence
+
+**During /reflect (Claude AI):**
+- Semantic validation filters false positives with high accuracy
+- Extracts concise, actionable statements
+- Works for any language
 
 Also detects:
 - Tool rejections (user stops an action with guidance)

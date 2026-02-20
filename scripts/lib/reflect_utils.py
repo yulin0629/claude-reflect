@@ -436,9 +436,54 @@ def backup_timestamp() -> str:
 # Pattern definitions (from capture-learning.sh)
 # =============================================================================
 
+# Explicit marker patterns (highest confidence)
+EXPLICIT_PATTERNS = [
+    (r"remember:", "remember:", 0.90, 120),  # pattern, name, confidence, decay_days
+]
+
+# Positive feedback patterns
+POSITIVE_PATTERNS = [
+    (r"perfect!|exactly right|that's exactly", "perfect", 0.70, 90),
+    (r"that's what I wanted|great approach", "great-approach", 0.70, 90),
+    (r"keep doing this|love it|excellent|nailed it", "keep-doing", 0.70, 90),
+]
+
+# Correction patterns (conservative set to minimize false positives)
+# Format: (regex_pattern, pattern_name, is_strong)
+#
+# DESIGN NOTES:
+# - These patterns are English-centric as a FAST first-pass filter
+# - Non-English corrections are caught by semantic filtering during /reflect
+# - We use STRUCTURAL signals (length, questions, task requests) for language-agnostic filtering
+# - Users can use explicit markers like "remember:" in any language
+#
+CORRECTION_PATTERNS = [
+    (r"^no[,. ]+", "no,", True),  # Starts with "no," - common correction opener
+    (r"^don't\b|^do not\b", "don't", True),  # Starts with don't/do not
+    (r"^stop\b|^never\b", "stop/never", True),  # Starts with stop/never
+    (r"that's (wrong|incorrect)|that is (wrong|incorrect)", "that's-wrong", True),
+    (r"^actually[,. ]", "actually", False),  # Starts with "actually"
+    (r"^I meant\b|^I said\b", "I-meant/said", True),  # Clarification
+    (r"^I told you\b|^I already told\b", "I-told-you", True),  # Higher confidence
+    (r"use .{1,30} not\b", "use-X-not-Y", True),  # "use X not Y" - limited gap
+]
+
+# Guardrail patterns - "don't do X unless" constraints (highest confidence for corrections)
+# These detect user frustrations about Claude making unwanted changes
+# Format: (regex_pattern, pattern_name, confidence, decay_days)
+GUARDRAIL_PATTERNS = [
+    (r"don't (?:add|include|create) .{1,40} unless", "dont-unless-asked", 0.90, 120),
+    (r"only (?:change|modify|edit|touch) what I (?:asked|requested|said)", "only-what-asked", 0.90, 120),
+    (r"stop (?:refactoring|changing|modifying|editing) (?:unrelated|other|surrounding)", "stop-unrelated", 0.90, 120),
+    (r"don't (?:over-engineer|add extra|be too|make unnecessary)", "dont-over-engineer", 0.85, 90),
+    (r"don't (?:refactor|reorganize|restructure) (?:unless|without)", "dont-refactor-unless", 0.85, 90),
+    (r"leave .{1,30} (?:alone|unchanged|as is)", "leave-alone", 0.85, 90),
+    (r"don't (?:add|include) (?:comments|docstrings|type hints|annotations) (?:unless|to code)", "dont-add-annotations", 0.85, 90),
+    (r"(?:minimal|minimum|only necessary) changes", "minimal-changes", 0.80, 90),
+]
+
 # Structural patterns indicating FALSE POSITIVES (language-agnostic)
-# These focus on MESSAGE STRUCTURE rather than specific words.
-# Kept even with embedding detection — structural signals are <1ms and language-agnostic.
+# These focus on MESSAGE STRUCTURE rather than specific words
 FALSE_POSITIVE_PATTERNS = [
     r"[?\uff1f]$",  # Ends with question mark (ASCII ? or full-width ？)
     r"[嗎吗呢か까]$",  # Ends with CJK question particle
@@ -455,15 +500,17 @@ FALSE_POSITIVE_PATTERNS = [
 # Exception: explicit "remember:" markers are always processed regardless of length.
 MAX_CAPTURE_PROMPT_LENGTH = 500
 
+# Maximum message length for weak patterns (structural heuristic)
+# Long messages are more likely to be context/tasks than corrections
+MAX_WEAK_PATTERN_LENGTH = 150
+
+# Very short messages without question marks are more likely corrections
+MIN_SHORT_CORRECTION_LENGTH = 80
+
 
 def detect_patterns(text: str) -> Tuple[Optional[str], str, float, str, int]:
     """
     Detect patterns in text and return classification.
-
-    Uses a layered approach:
-    1. Regex for "remember:" (explicit markers — must never miss)
-    2. Regex for structural false positives (language-agnostic, <1ms)
-    3. Embedding daemon for semantic classification (multilingual, ~20ms)
 
     Returns:
         Tuple of (type, matched_patterns, confidence, sentiment, decay_days)
@@ -473,28 +520,87 @@ def detect_patterns(text: str) -> Tuple[Optional[str], str, float, str, int]:
         sentiment: "correction" or "positive"
         decay_days: Number of days until decay
     """
-    # Priority 0: "remember:" — explicit marker, must never miss (regex)
-    if re.search(r"remember:", text, re.IGNORECASE):
-        return ("explicit", "remember:", 0.90, "correction", 120)
+    # Check for explicit "remember:" - always highest priority
+    for pattern, name, confidence, decay in EXPLICIT_PATTERNS:
+        if re.search(pattern, text, re.IGNORECASE):
+            return ("explicit", name, confidence, "correction", decay)
 
-    # Priority 0.5: Too short to be actionable (e.g. "廢話", "OK", "好")
+    # Too short to be actionable (e.g. "廢話", "OK", "好")
     if len(text.strip()) <= 4:
         return (None, "", 0.0, "correction", 90)
 
-    # Priority 1: Structural false positive filter (regex, language-agnostic, <1ms)
+    # Check for guardrail patterns - "don't do X unless" constraints
+    # These are high-confidence corrections about unwanted behavior
+    for pattern, name, confidence, decay in GUARDRAIL_PATTERNS:
+        if re.search(pattern, text, re.IGNORECASE):
+            return ("guardrail", name, confidence, "correction", decay)
+
+    # Check for FALSE POSITIVE patterns - skip these messages
     for fp_pattern in FALSE_POSITIVE_PATTERNS:
         if re.search(fp_pattern, text, re.IGNORECASE):
             return (None, "", 0.0, "correction", 90)
 
-    # Priority 2: Embedding daemon (multilingual semantic classification)
-    try:
-        from lib.daemon_client import classify_via_daemon
-        return classify_via_daemon(text)
-    except ImportError:
-        pass
+    # Check for positive patterns
+    matched_positive = []
+    for pattern, name, confidence, decay in POSITIVE_PATTERNS:
+        if re.search(pattern, text, re.IGNORECASE):
+            matched_positive.append(name)
 
-    # Fallback: no classification available
-    return (None, "", 0.0, "correction", 90)
+    if matched_positive:
+        return ("positive", " ".join(matched_positive), 0.70, "positive", 90)
+
+    # Skip long messages for weak patterns (likely task requests)
+    text_length = len(text)
+
+    # Check for correction patterns
+    matched_corrections = []
+    pattern_count = 0
+    has_strong_pattern = False
+    has_i_told_you = False
+
+    for pattern, name, is_strong in CORRECTION_PATTERNS:
+        if re.search(pattern, text, re.IGNORECASE):
+            # Skip weak patterns in long messages
+            if not is_strong and text_length > MAX_WEAK_PATTERN_LENGTH:
+                continue
+            matched_corrections.append(name)
+            pattern_count += 1
+            if is_strong:
+                has_strong_pattern = True
+            if name == "I-told-you":
+                has_i_told_you = True
+
+    if matched_corrections:
+        # Calculate confidence based on pattern count, type, and length
+        if has_i_told_you:
+            confidence = 0.85
+            decay_days = 120
+        elif pattern_count >= 3:
+            confidence = 0.85
+            decay_days = 120
+        elif pattern_count >= 2:
+            confidence = 0.75
+            decay_days = 90
+        elif has_strong_pattern:
+            confidence = 0.70
+            decay_days = 60
+        else:
+            confidence = 0.55  # Reduced for weak single patterns
+            decay_days = 45
+
+        # Adjust confidence based on message length (structural signal)
+        # Short messages are more likely to be direct corrections
+        if text_length < MIN_SHORT_CORRECTION_LENGTH:
+            confidence = min(0.90, confidence + 0.10)  # Boost for short messages
+        elif text_length > 300:
+            confidence = max(0.50, confidence - 0.15)  # Reduce for long messages
+        elif text_length > 150:
+            confidence = max(0.55, confidence - 0.10)
+
+        return ("auto", " ".join(matched_corrections), confidence, "correction", decay_days)
+
+    # Passthrough: non-English or unmatched messages queued for /reflect AI validation
+    return ("auto", "regex:passthrough", 0.50, "correction", 90)
 
 
 def create_queue_item(
